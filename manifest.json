@@ -1,0 +1,14 @@
+{
+  "name": "Campo — Mapa da Fazenda",
+  "short_name": "Campo",
+  "description": "Mapa georreferenciado offline/online das fazendas, com camadas de área, parcelas e estradas.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#16261C",
+  "theme_color": "#243B2C",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

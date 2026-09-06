@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Campo — Mapa da Fazenda</title>
+<meta name="theme-color" content="#243B2C">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root{
+    /* Paleta: verde-copa (mata/área), terracota (estradas de terra), âmbar-dendê (parcelas), azul-poço (localização/água) */
+    --canopy-900:#16261C;
+    --canopy-800:#1F3327;
+    --canopy-700:#2B4736;
+    --canopy-600:#3E6349;
+    --sand-100:#F3EFE4;
+    --sand-200:#E8E0CC;
+    --clay-500:#B9633F;
+    --amber-500:#D6A03D;
+    --well-500:#2F7C8C;
+    --ink-900:#12180F;
+    --ink-050:#FAF8F2;
+    --danger:#C1442B;
+    --line: rgba(250,248,242,0.14);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;margin:0;overscroll-behavior:none;}
+  body{
+    font-family: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+    background:var(--canopy-900);
+    color:var(--ink-050);
+  }
+  #map{position:fixed; inset:0; background:#0E1712;}
+  .leaflet-container{font-family:inherit;}
+
+  /* ---------- Barra superior ---------- */
+  .topbar{
+    position:fixed; top:0; left:0; right:0; z-index:1000;
+    padding:calc(env(safe-area-inset-top,0px) + 10px) 14px 10px;
+    background:linear-gradient(to bottom, rgba(18,24,15,0.85), rgba(18,24,15,0));
+    pointer-events:none;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .brand{
+    display:flex; align-items:baseline; gap:8px;
+    pointer-events:auto;
+  }
+  .brand .mark{
+    font-weight:700; font-size:16px; letter-spacing:0.2px; color:var(--ink-050);
+    background:var(--canopy-800); border:1px solid var(--line);
+    padding:7px 12px; border-radius:10px;
+  }
+  .brand .sub{font-size:11px; color:var(--sand-200); opacity:0.75;}
+  .gps-status{
+    pointer-events:auto;
+    display:flex; align-items:center; gap:6px;
+    font-size:11.5px; background:var(--canopy-800);
+    border:1px solid var(--line); border-radius:999px;
+    padding:6px 11px 6px 8px; color:var(--sand-200);
+  }
+  .gps-dot{width:8px;height:8px;border-radius:50%;background:var(--danger); flex:none;}
+  .gps-dot.live{background:var(--well-500); box-shadow:0 0 0 0 rgba(47,124,140,0.6); animation:pulse 1.8s infinite;}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(47,124,140,0.55);}
+    70%{box-shadow:0 0 0 7px rgba(47,124,140,0);}
+    100%{box-shadow:0 0 0 0 rgba(47,124,140,0);}
+  }
+
+  /* ---------- Botões flutuantes ---------- */
+  .fab-col{
+    position:fixed; right:14px; bottom:calc(env(safe-area-inset-bottom,0px) + 18px);
+    z-index:1000; display:flex; flex-direction:column; gap:10px; align-items:flex-end;
+  }
+  .fab{
+    width:50px; height:50px; border-radius:50%;
+    background:var(--canopy-800); border:1px solid var(--line);
+    color:var(--ink-050); display:flex; align-items:center; justify-content:center;
+    box-shadow:0 4px 14px rgba(0,0,0,0.35);
+    font-size:20px; cursor:pointer;
+  }
+  .fab:active{transform:scale(0.94);}
+  .fab.primary{background:var(--well-500); border-color:transparent;}
+  .fab.recording{background:var(--danger);}
+  .fab-label{
+    position:fixed; z-index:1000; right:72px; bottom:0;
+  }
+
+  /* ---------- Bottom sheet (camadas) ---------- */
+  .sheet-scrim{
+    position:fixed; inset:0; background:rgba(10,14,9,0.45); z-index:1400;
+    opacity:0; pointer-events:none; transition:opacity .2s ease;
+  }
+  .sheet-scrim.open{opacity:1; pointer-events:auto;}
+  .sheet{
+    position:fixed; left:0; right:0; bottom:0; z-index:1500;
+    background:var(--ink-050); color:var(--ink-900);
+    border-radius:18px 18px 0 0;
+    max-height:78vh; display:flex; flex-direction:column;
+    transform:translateY(102%); transition:transform .28s cubic-bezier(.2,.9,.25,1);
+    box-shadow:0 -8px 30px rgba(0,0,0,0.4);
+    padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  .sheet.open{transform:translateY(0);}
+  .sheet-handle{width:38px; height:4px; background:#D9D2C0; border-radius:3px; margin:10px auto 4px;}
+  .sheet-head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:6px 18px 12px; border-bottom:1px solid #E7E1D2;
+  }
+  .sheet-head h2{font-size:16px; margin:0; font-weight:700;}
+  .sheet-head .close{
+    border:none; background:none; font-size:20px; color:#7A7362; cursor:pointer; padding:6px;
+  }
+  .sheet-body{overflow-y:auto; padding:10px 16px 22px;}
+
+  .layer-card{
+    border:1px solid #E7E1D2; border-radius:14px; padding:12px 12px 10px; margin-bottom:10px;
+    background:#FFFEFC;
+  }
+  .layer-row{display:flex; align-items:center; gap:10px;}
+  .swatch{width:14px;height:14px;border-radius:4px; flex:none; border:1px solid rgba(0,0,0,0.15);}
+  .layer-name{font-weight:600; font-size:14.5px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .layer-meta{font-size:11.5px; color:#8A8371; margin-top:1px;}
+
+  .switch{position:relative; width:42px; height:24px; flex:none;}
+  .switch input{opacity:0; width:0; height:0;}
+  .switch .track{
+    position:absolute; inset:0; background:#D9D2C0; border-radius:999px; transition:.18s;
+  }
+  .switch .track::before{
+    content:""; position:absolute; width:18px; height:18px; left:3px; top:3px;
+    background:#fff; border-radius:50%; transition:.18s; box-shadow:0 1px 3px rgba(0,0,0,0.25);
+  }
+  .switch input:checked + .track{background:var(--canopy-600);}
+  .switch input:checked + .track::before{transform:translateX(18px);}
+
+  .layer-extra{margin-top:10px; padding-top:10px; border-top:1px dashed #E7E1D2; display:none;}
+  .layer-card.expanded .layer-extra{display:block;}
+  .field-label{font-size:11.5px; color:#8A8371; margin-bottom:5px; font-weight:600;}
+  select, .btn{
+    font-family:inherit; font-size:13.5px;
+  }
+  select{
+    width:100%; padding:9px 10px; border-radius:9px; border:1px solid #DCD5C4; background:#fff; color:var(--ink-900);
+  }
+  .toggle-labels{
+    display:flex; align-items:center; justify-content:space-between; margin-top:10px;
+  }
+  .toggle-labels span{font-size:13px; color:#5B5646;}
+  .mini-switch{position:relative; width:34px; height:19px;}
+  .mini-switch input{opacity:0;width:0;height:0;}
+  .mini-switch .t{position:absolute; inset:0; background:#D9D2C0; border-radius:999px; transition:.18s;}
+  .mini-switch .t::before{content:"";position:absolute;width:14px;height:14px;left:2.5px;top:2.5px;background:#fff;border-radius:50%;transition:.18s;}
+  .mini-switch input:checked + .t{background:var(--well-500);}
+  .mini-switch input:checked + .t::before{transform:translateX(15px);}
+
+  .expand-btn{
+    background:none; border:none; color:#8A8371; font-size:12px; margin-top:8px;
+    padding:2px 0; cursor:pointer; text-decoration:underline;
+  }
+
+  .add-layer-btn{
+    width:100%; padding:13px; border-radius:12px; border:1.5px dashed #C7BFA9;
+    background:transparent; color:#5B5646; font-weight:600; font-size:13.5px;
+    display:flex; align-items:center; justify-content:center; gap:8px; cursor:pointer;
+    margin-top:4px;
+  }
+
+  /* ---------- Painel de importação ---------- */
+  .import-panel .sheet-body{padding-top:14px;}
+  .hint{font-size:12.5px; color:#8A8371; line-height:1.5; margin:6px 0 14px;}
+  .drop{
+    border:1.5px dashed #C7BFA9; border-radius:14px; padding:22px 14px;
+    text-align:center; color:#6E6851; font-size:13px; margin-bottom:14px;
+  }
+  .drop.drag{border-color:var(--well-500); background:#EEF6F5;}
+  .drop input{display:none;}
+  .drop .icon{font-size:26px; display:block; margin-bottom:6px;}
+  .file-list{font-size:12.5px; color:#5B5646; margin-bottom:6px;}
+  .import-status{font-size:12.5px; margin-top:8px; min-height:18px;}
+  .import-status.err{color:var(--danger);}
+  .import-status.ok{color:#2C7A46;}
+
+  /* ---------- Popup de atributos (Leaflet) ---------- */
+  .leaflet-popup-content-wrapper{border-radius:12px;}
+  .attr-pop table{border-collapse:collapse; font-size:12.5px;}
+  .attr-pop td{padding:2px 6px 2px 0; vertical-align:top;}
+  .attr-pop td.k{color:#8A8371; white-space:nowrap; font-weight:600;}
+  .attr-pop .title{font-weight:700; margin-bottom:4px; font-size:13.5px;}
+
+  .parcel-label{
+    background:transparent!important; border:none!important; box-shadow:none!important;
+    font-size:11px; font-weight:700; color:#3A2E12; text-shadow:0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff;
+    white-space:nowrap;
+  }
+
+  .user-dot{
+    width:16px; height:16px; border-radius:50%; background:var(--well-500);
+    border:2.5px solid #fff; box-shadow:0 0 0 2px rgba(47,124,140,0.5);
+  }
+
+  .toast{
+    position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(20px);
+    background:var(--ink-900); color:var(--ink-050); padding:10px 16px; border-radius:10px;
+    font-size:13px; z-index:2000; opacity:0; transition:.25s; pointer-events:none; max-width:86vw; text-align:center;
+  }
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
+
+  .basemap-pill{
+    position:fixed; left:14px; bottom:calc(env(safe-area-inset-bottom,0px) + 18px); z-index:1000;
+    background:var(--canopy-800); border:1px solid var(--line); border-radius:999px;
+    display:flex; padding:3px; gap:2px;
+  }
+  .basemap-pill button{
+    border:none; background:transparent; color:var(--sand-200); font-size:11.5px;
+    padding:8px 12px; border-radius:999px; cursor:pointer;
+  }
+  .basemap-pill button.active{background:var(--sand-100); color:var(--ink-900); font-weight:700;}
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="topbar">
+  <div class="brand">
+    <span class="mark">🌴 Campo</span>
+    <span class="sub">Fazendas Sococo</span>
+  </div>
+  <div class="gps-status" id="gpsStatus">
+    <span class="gps-dot" id="gpsDot"></span>
+    <span id="gpsText">GPS desligado</span>
+  </div>
+</div>
+
+<div class="basemap-pill" id="basemapPill">
+  <button data-bm="offline" class="active">Offline</button>
+  <button data-bm="street">Ruas</button>
+  <button data-bm="sat">Satélite</button>
+</div>
+
+<div class="fab-col">
+  <button class="fab" id="btnImport" title="Importar shapefile">📂</button>
+  <button class="fab" id="btnLayers" title="Camadas">🗂️</button>
+  <button class="fab primary" id="btnGps" title="Minha localização">📍</button>
+</div>
+
+<!-- Painel de camadas -->
+<div class="sheet-scrim" id="scrimLayers"></div>
+<div class="sheet" id="sheetLayers">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <h2>Camadas do mapa</h2>
+    <button class="close" data-close="sheetLayers">✕</button>
+  </div>
+  <div class="sheet-body" id="layersBody"></div>
+</div>
+
+<!-- Painel de importação -->
+<div class="sheet-scrim" id="scrimImport"></div>
+<div class="sheet import-panel" id="sheetImport">
+  <div class="sheet-handle"></div>
+  <div class="sheet-head">
+    <h2>Importar shapefile</h2>
+    <button class="close" data-close="sheetImport">✕</button>
+  </div>
+  <div class="sheet-body">
+    <p class="hint">Envie um arquivo <strong>.zip</strong> contendo o conjunto completo do shapefile (.shp, .shx, .dbf e, se houver, .prj). A camada é adicionada ao mapa e empilhada sobre as demais.</p>
+    <label class="drop" id="dropZone">
+      <span class="icon">⬆️</span>
+      Toque para escolher o .zip<br>ou arraste o arquivo aqui
+      <input type="file" id="fileInput" accept=".zip">
+    </label>
+    <div class="import-status" id="importStatus"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/shpjs@4.0.4/dist/shp.min.js"></script>
+<script src="data.js"></script>
+<script>
+(function(){
+"use strict";
+
+/* ======================= Estado ======================= */
+var layers = [];        // { id, name, type, role, geojson, labelField, visible, leafletLayer, labelLayer, source }
+var layerSeq = 0;
+var userMarker = null, userAccuracyCircle = null, watchId = null, gpsFollowing = false;
+
+/* ======================= Mapa base ======================= */
+var map = L.map('map', {
+  zoomControl:false,
+  attributionControl:true,
+  maxZoom:20
+}).setView([-1.2117, -48.0554], 15);
+
+L.control.attribution({position:'bottomright', prefix:false}).addTo(map);
+L.control.zoom({position:'bottomright'}).remove(); // usamos os FABs próprios; zoom por gesto continua ativo
+
+/* Camada base "Offline": tiles cacheados via Service Worker (cache-first).
+   Camadas "Ruas" e "Satélite" seguem o mesmo mecanismo — o SW guarda em cache
+   qualquer ladrilho já baixado, então tudo o que foi visto uma vez com internet
+   volta a aparecer sem conexão. */
+var baseStreet = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom:19, subdomains:'abc',
+  attribution:'&copy; OpenStreetMap'
+});
+var baseSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom:19,
+  attribution:'Esri World Imagery'
+});
+var currentBase = baseStreet.addTo(map);
+
+document.getElementById('basemapPill').addEventListener('click', function(e){
+  var btn = e.target.closest('button[data-bm]');
+  if(!btn) return;
+  document.querySelectorAll('#basemapPill button').forEach(function(b){b.classList.remove('active');});
+  btn.classList.add('active');
+  var bm = btn.dataset.bm;
+  map.removeLayer(currentBase);
+  if(bm === 'sat'){ currentBase = baseSat; }
+  else { currentBase = baseStreet; } // "offline" e "street" usam o mesmo tile-set leve de ruas
+  currentBase.addTo(map);
+  if(bm === 'offline') showToast('Mostrando ladrilhos já salvos no cache do aparelho.');
+});
+
+/* ======================= Estilos por papel de camada ======================= */
+var roleStyle = {
+  area:      { color:'#16261C', weight:3, fillColor:'#2B4736', fillOpacity:0.06, dashArray:null },
+  parcelas:  { color:'#8A5A22', weight:1.4, fillColor:'#D6A03D', fillOpacity:0.30 },
+  estradas:  { color:'#B9633F', weight:3, opacity:0.9 },
+  outra:     { color:'#2F7C8C', weight:2, fillColor:'#2F7C8C', fillOpacity:0.22 }
+};
+var swatchColor = {area:'#2B4736', parcelas:'#D6A03D', estradas:'#B9633F', outra:'#2F7C8C'};
+
+/* ======================= Criação / render de camadas ======================= */
+function fieldsOf(geojson){
+  var set = [];
+  var seen = {};
+  (geojson.features||[]).forEach(function(f){
+    Object.keys(f.properties||{}).forEach(function(k){
+      if(!seen[k]){ seen[k]=true; set.push(k); }
+    });
+  });
+  return set;
+}
+
+function popupHtml(name, props){
+  var rows = Object.keys(props||{}).map(function(k){
+    var v = props[k];
+    if(v === null || v === undefined || v === '') v = '—';
+    return '<tr><td class="k">'+escapeHtml(k)+'</td><td>'+escapeHtml(String(v))+'</td></tr>';
+  }).join('');
+  return '<div class="attr-pop"><div class="title">'+escapeHtml(name)+'</div><table>'+rows+'</table></div>';
+}
+function escapeHtml(s){
+  return s.replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
+function centroidLatLng(layer){
+  try{
+    if(layer.getBounds) return layer.getBounds().getCenter();
+  }catch(e){}
+  return null;
+}
+
+function buildLeafletLayer(entry){
+  var style = roleStyle[entry.role] || roleStyle.outra;
+  var isLine = entry.type === 'line';
+  var group = L.layerGroup();
+  var labelGroup = L.layerGroup();
+
+  var gjLayer = L.geoJSON(entry.geojson, {
+    style: function(){ return style; },
+    pointToLayer: function(feature, latlng){
+      return L.circleMarker(latlng, {radius:6, color:style.color, fillColor:style.fillColor||style.color, fillOpacity:0.8, weight:2});
+    },
+    onEachFeature: function(feature, lyr){
+      var nameGuess = feature.properties && (feature.properties[entry.labelField] || feature.properties.nome || feature.properties.NOME);
+      lyr.bindPopup(popupHtml(nameGuess || entry.name, feature.properties));
+      if(!isLine && entry.labelField){
+        var val = feature.properties ? feature.properties[entry.labelField] : null;
+        if(val !== undefined && val !== null && val !== ''){
+          var c = centroidLatLng(lyr);
+          if(c){
+            var marker = L.marker(c, {
+              icon: L.divIcon({className:'parcel-label', html: escapeHtml(String(val)), iconSize:null}),
+              interactive:false
+            });
+            labelGroup.addLayer(marker);
+          }
+        }
+      }
+    }
+  });
+
+  group.addLayer(gjLayer);
+  entry.leafletLayer = group;
+  entry.labelLayer = labelGroup;
+  entry.geoLayer = gjLayer;
+  entry.showLabels = !isLine;
+}
+
+function refreshLabels(entry){
+  entry.labelLayer.clearLayers();
+  if(!entry.showLabels || !entry.labelField) return;
+  entry.geoLayer.eachLayer(function(lyr){
+    var feature = lyr.feature;
+    var val = feature.properties ? feature.properties[entry.labelField] : null;
+    if(val === undefined || val === null || val === '') return;
+    var c = centroidLatLng(lyr);
+    if(!c) return;
+    var marker = L.marker(c, {
+      icon: L.divIcon({className:'parcel-label', html: escapeHtml(String(val)), iconSize:null}),
+      interactive:false
+    });
+    entry.labelLayer.addLayer(marker);
+  });
+}
+
+function addLayerEntry(name, role, type, geojson, source, defaultLabelField){
+  layerSeq++;
+  var entry = {
+    id:'l'+layerSeq+'-'+Date.now(),
+    name:name, role:role, type:type, geojson:geojson, source:source||'embutida',
+    labelField: defaultLabelField || null, visible:true, showLabels:true
+  };
+  buildLeafletLayer(entry);
+  entry.leafletLayer.addTo(map);
+  if(entry.showLabels) entry.labelLayer.addTo(map);
+  refreshLabels(entry);
+  layers.push(entry);
+  return entry;
+}
+
+function fitAll(){
+  var group = new L.featureGroup(layers.map(function(l){return l.leafletLayer;}));
+  if(layers.length){
+    try{ map.fitBounds(group.getBounds().pad(0.06)); }catch(e){}
+  }
+}
+
+/* ======================= Carrega camadas embutidas ======================= */
+(window.EMBEDDED_LAYERS||[]).forEach(function(l){
+  addLayerEntry(l.name, l.role, l.type, l.geojson, 'shapefile do imóvel', l.labelField);
+});
+fitAll();
+
+/* ======================= Painel de Camadas (UI) ======================= */
+function renderLayersPanel(){
+  var body = document.getElementById('layersBody');
+  body.innerHTML = '';
+  layers.forEach(function(entry){
+    var card = document.createElement('div');
+    card.className = 'layer-card';
+    var fields = fieldsOf(entry.geojson);
+    var fieldOptions = fields.map(function(f){
+      return '<option value="'+escapeHtml(f)+'"'+(f===entry.labelField?' selected':'')+'>'+escapeHtml(f)+'</option>';
+    }).join('');
+
+    card.innerHTML =
+      '<div class="layer-row">'+
+        '<span class="swatch" style="background:'+(swatchColor[entry.role]||swatchColor.outra)+'"></span>'+
+        '<span class="layer-name">'+escapeHtml(entry.name)+'</span>'+
+        '<label class="switch"><input type="checkbox" class="vis-toggle" '+(entry.visible?'checked':'')+'><span class="track"></span></label>'+
+      '</div>'+
+      '<div class="layer-meta">'+entry.geojson.features.length+' feição(ões) · '+escapeHtml(entry.source)+'</div>'+
+      (entry.type!=='line' ? '<button class="expand-btn">Rótulo e detalhes ▾</button>' : '') +
+      (entry.type!=='line' ?
+        '<div class="layer-extra">'+
+          '<div class="field-label">Campo usado como rótulo</div>'+
+          '<select class="label-field">'+
+            '<option value="">— sem rótulo —</option>'+
+            fieldOptions+
+          '</select>'+
+          '<div class="toggle-labels">'+
+            '<span>Mostrar rótulos no mapa</span>'+
+            '<label class="mini-switch"><input type="checkbox" class="labels-toggle" '+(entry.showLabels?'checked':'')+'><span class="t"></span></label>'+
+          '</div>'+
+        '</div>' : '');
+
+    // toggles
+    card.querySelector('.vis-toggle').addEventListener('change', function(e){
+      entry.visible = e.target.checked;
+      if(entry.visible){
+        entry.leafletLayer.addTo(map);
+        if(entry.showLabels) entry.labelLayer.addTo(map);
+      } else {
+        map.removeLayer(entry.leafletLayer);
+        map.removeLayer(entry.labelLayer);
+      }
+    });
+
+    var expandBtn = card.querySelector('.expand-btn');
+    if(expandBtn){
+      expandBtn.addEventListener('click', function(){
+        card.classList.toggle('expanded');
+      });
+    }
+    var labelSelect = card.querySelector('.label-field');
+    if(labelSelect){
+      labelSelect.addEventListener('change', function(e){
+        entry.labelField = e.target.value || null;
+        refreshLabels(entry);
+      });
+    }
+    var labelsToggle = card.querySelector('.labels-toggle');
+    if(labelsToggle){
+      labelsToggle.addEventListener('change', function(e){
+        entry.showLabels = e.target.checked;
+        if(entry.showLabels && entry.visible){
+          refreshLabels(entry);
+          entry.labelLayer.addTo(map);
+        } else {
+          map.removeLayer(entry.labelLayer);
+        }
+      });
+    }
+
+    body.appendChild(card);
+  });
+
+  var addBtn = document.createElement('button');
+  addBtn.className = 'add-layer-btn';
+  addBtn.innerHTML = '📂 Importar novo shapefile (.zip)';
+  addBtn.addEventListener('click', function(){
+    closeSheet('sheetLayers');
+    openSheet('sheetImport');
+  });
+  body.appendChild(addBtn);
+}
+
+/* ======================= Sheets (camadas / importar) ======================= */
+function openSheet(id){
+  document.getElementById(id).classList.add('open');
+  document.getElementById(id === 'sheetLayers' ? 'scrimLayers':'scrimImport').classList.add('open');
+  if(id==='sheetLayers') renderLayersPanel();
+}
+function closeSheet(id){
+  document.getElementById(id).classList.remove('open');
+  document.getElementById(id === 'sheetLayers' ? 'scrimLayers':'scrimImport').classList.remove('open');
+}
+document.getElementById('btnLayers').addEventListener('click', function(){ openSheet('sheetLayers'); });
+document.getElementById('btnImport').addEventListener('click', function(){ openSheet('sheetImport'); });
+document.getElementById('scrimLayers').addEventListener('click', function(){ closeSheet('sheetLayers'); });
+document.getElementById('scrimImport').addEventListener('click', function(){ closeSheet('sheetImport'); });
+document.querySelectorAll('[data-close]').forEach(function(b){
+  b.addEventListener('click', function(){ closeSheet(b.dataset.close); });
+});
+
+/* ======================= Importar shapefile (.zip) via shpjs ======================= */
+var dropZone = document.getElementById('dropZone');
+var fileInput = document.getElementById('fileInput');
+var importStatus = document.getElementById('importStatus');
+
+['dragover','dragenter'].forEach(function(ev){
+  dropZone.addEventListener(ev, function(e){ e.preventDefault(); dropZone.classList.add('drag'); });
+});
+['dragleave','drop'].forEach(function(ev){
+  dropZone.addEventListener(ev, function(e){ e.preventDefault(); dropZone.classList.remove('drag'); });
+});
+dropZone.addEventListener('drop', function(e){
+  var f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if(f) handleShapefileZip(f);
+});
+fileInput.addEventListener('change', function(e){
+  var f = e.target.files && e.target.files[0];
+  if(f) handleShapefileZip(f);
+});
+
+function handleShapefileZip(file){
+  importStatus.className = 'import-status';
+  importStatus.textContent = 'Lendo '+file.name+'…';
+  var reader = new FileReader();
+  reader.onload = function(e){
+    shp(e.target.result).then(function(result){
+      // shpjs pode retornar um FeatureCollection único ou um array (múltiplas camadas no zip)
+      var collections = Array.isArray(result) ? result : [result];
+      collections.forEach(function(fc, idx){
+        var baseName = file.name.replace(/\.zip$/i, '') + (collections.length>1 ? ' ('+(idx+1)+')' : '');
+        var geomType = (fc.features[0] && fc.features[0].geometry && fc.features[0].geometry.type) || 'Polygon';
+        var type = /line/i.test(geomType) ? 'line' : (/point/i.test(geomType) ? 'point' : 'polygon');
+        var guessField = null;
+        if(fc.features[0]){
+          var keys = Object.keys(fc.features[0].properties||{});
+          guessField = keys.length ? keys[0] : null;
+        }
+        addLayerEntry(baseName, 'outra', type, fc, 'importado agora', guessField);
+      });
+      importStatus.className = 'import-status ok';
+      importStatus.textContent = 'Camada adicionada ao mapa ✓';
+      fitAll();
+      setTimeout(function(){
+        closeSheet('sheetImport');
+        openSheet('sheetLayers');
+      }, 500);
+    }).catch(function(err){
+      console.error(err);
+      importStatus.className = 'import-status err';
+      importStatus.textContent = 'Não foi possível ler este .zip. Confirme que contém .shp, .shx e .dbf.';
+    });
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+/* ======================= GPS em tempo real ======================= */
+var gpsDot = document.getElementById('gpsDot');
+var gpsText = document.getElementById('gpsText');
+var btnGps = document.getElementById('btnGps');
+
+function startGps(){
+  if(!navigator.geolocation){
+    showToast('Este navegador não oferece GPS.');
+    return;
+  }
+  gpsText.textContent = 'Localizando…';
+  watchId = navigator.geolocation.watchPosition(onGpsUpdate, onGpsError, {
+    enableHighAccuracy:true, maximumAge:2000, timeout:15000
+  });
+  gpsFollowing = true;
+  btnGps.classList.add('recording');
+}
+function stopGps(){
+  if(watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = null;
+  gpsFollowing = false;
+  btnGps.classList.remove('recording');
+  gpsDot.classList.remove('live');
+  gpsText.textContent = 'GPS desligado';
+}
+function onGpsUpdate(pos){
+  var latlng = [pos.coords.latitude, pos.coords.longitude];
+  gpsDot.classList.add('live');
+  gpsText.textContent = 'Precisão ±'+Math.round(pos.coords.accuracy)+'m';
+
+  if(!userMarker){
+    userMarker = L.marker(latlng, {icon: L.divIcon({className:'', html:'<div class="user-dot"></div>', iconSize:[16,16]})}).addTo(map);
+    userAccuracyCircle = L.circle(latlng, {radius:pos.coords.accuracy, color:'#2F7C8C', weight:1, fillOpacity:0.08}).addTo(map);
+    map.setView(latlng, 18);
+  } else {
+    userMarker.setLatLng(latlng);
+    userAccuracyCircle.setLatLng(latlng);
+    userAccuracyCircle.setRadius(pos.coords.accuracy);
+    if(gpsFollowing) map.panTo(latlng, {animate:true});
+  }
+}
+function onGpsError(err){
+  gpsDot.classList.remove('live');
+  if(err.code === 1){ gpsText.textContent = 'Permissão de GPS negada'; showToast('Permita o acesso à localização nas configurações do navegador.'); }
+  else if(err.code === 2){ gpsText.textContent = 'Sinal de GPS indisponível'; }
+  else { gpsText.textContent = 'Erro de GPS'; }
+}
+btnGps.addEventListener('click', function(){
+  if(watchId === null) startGps();
+  else if(!gpsFollowing){ gpsFollowing = true; if(userMarker) map.panTo(userMarker.getLatLng()); }
+  else stopGps();
+});
+map.on('dragstart', function(){ gpsFollowing = false; });
+
+/* ======================= Toast ======================= */
+var toastTimer = null;
+function showToast(msg){
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.classList.remove('show'); }, 3200);
+}
+
+/* ======================= Service Worker (uso offline) ======================= */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', function(){
+    navigator.serviceWorker.register('sw.js').then(function(){
+      console.log('Service worker ativo — ladrilhos e app funcionam offline após a primeira visita online.');
+    }).catch(function(err){
+      console.warn('Service worker não registrado (requer HTTPS ou localhost):', err);
+    });
+  });
+}
+
+/* Aviso inicial */
+setTimeout(function(){
+  if(!navigator.onLine) showToast('Sem conexão — mostrando dados e ladrilhos salvos no aparelho.');
+}, 600);
+
+})();
+</script>
+</body>
+</html>
