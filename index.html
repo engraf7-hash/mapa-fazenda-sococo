@@ -268,11 +268,11 @@
     <button class="close" data-close="sheetImport">✕</button>
   </div>
   <div class="sheet-body">
-    <p class="hint">Envie um arquivo <strong>.zip</strong> contendo o conjunto completo do shapefile (.shp, .shx, .dbf e, se houver, .prj). A camada é adicionada ao mapa e empilhada sobre as demais.</p>
+    <p class="hint">Envie um arquivo <strong>.zip</strong> com o shapefile completo, <strong>ou</strong> selecione os arquivos soltos (.shp + .shx + .dbf, e .prj se houver) de uma vez — o app aceita dos dois jeitos. A camada é adicionada ao mapa e empilhada sobre as demais.</p>
     <label class="drop" id="dropZone">
       <span class="icon">⬆️</span>
-      Toque para escolher o .zip<br>ou arraste o arquivo aqui
-      <input type="file" id="fileInput" accept=".zip">
+      Toque para escolher os arquivos<br>ou arraste-os aqui
+      <input type="file" id="fileInput" accept=".zip,.shp,.shx,.dbf,.prj,.cpg" multiple>
     </label>
     <div class="import-status" id="importStatus"></div>
   </div>
@@ -282,6 +282,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/shpjs@4.0.4/dist/shp.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="data.js"></script>
 <script>
 (function(){
@@ -555,7 +556,7 @@ document.querySelectorAll('[data-close]').forEach(function(b){
   b.addEventListener('click', function(){ closeSheet(b.dataset.close); });
 });
 
-/* ======================= Importar shapefile (.zip) via shpjs ======================= */
+/* ======================= Importar shapefile (.zip OU arquivos soltos) via shpjs ======================= */
 var dropZone = document.getElementById('dropZone');
 var fileInput = document.getElementById('fileInput');
 var importStatus = document.getElementById('importStatus');
@@ -567,47 +568,104 @@ var importStatus = document.getElementById('importStatus');
   dropZone.addEventListener(ev, function(e){ e.preventDefault(); dropZone.classList.remove('drag'); });
 });
 dropZone.addEventListener('drop', function(e){
-  var f = e.dataTransfer.files && e.dataTransfer.files[0];
-  if(f) handleShapefileZip(f);
+  e.preventDefault();
+  var files = e.dataTransfer.files;
+  if(files && files.length) handleFileSelection(files);
 });
 fileInput.addEventListener('change', function(e){
-  var f = e.target.files && e.target.files[0];
-  if(f) handleShapefileZip(f);
+  if(e.target.files && e.target.files.length) handleFileSelection(e.target.files);
+  fileInput.value = ''; // permite selecionar os mesmos arquivos de novo depois de um erro
 });
 
-function handleShapefileZip(file){
+function readAsArrayBuffer(file){
+  return new Promise(function(resolve, reject){
+    var r = new FileReader();
+    r.onload = function(e){ resolve(e.target.result); };
+    r.onerror = function(){ reject(new Error('Falha ao ler '+file.name)); };
+    r.readAsArrayBuffer(file);
+  });
+}
+
+function baseNameNoExt(name){
+  return name.replace(/\.[^.]+$/, '');
+}
+
+function addShapefileResult(result, baseName){
+  // shpjs pode retornar um FeatureCollection único ou um array (múltiplas camadas)
+  var collections = Array.isArray(result) ? result : [result];
+  collections.forEach(function(fc, idx){
+    if(!fc.features || !fc.features.length){ return; }
+    var name = baseName + (collections.length>1 ? ' ('+(idx+1)+')' : '');
+    var geomType = (fc.features[0].geometry && fc.features[0].geometry.type) || 'Polygon';
+    var type = /line/i.test(geomType) ? 'line' : (/point/i.test(geomType) ? 'point' : 'polygon');
+    var keys = Object.keys(fc.features[0].properties||{});
+    addLayerEntry(name, 'outra', type, fc, 'importado agora', keys.length ? keys[0] : null);
+  });
+  importStatus.className = 'import-status ok';
+  importStatus.textContent = 'Camada adicionada ao mapa ✓';
+  fitAll();
+  setTimeout(function(){
+    closeSheet('sheetImport');
+    openSheet('sheetLayers');
+  }, 500);
+}
+
+function importFailed(err, hint){
+  console.error(err);
+  importStatus.className = 'import-status err';
+  var detail = (err && err.message) ? err.message : String(err);
+  importStatus.textContent = (hint || 'Não foi possível importar.') + ' (' + detail + ')';
+}
+
+function handleFileSelection(fileList){
+  var files = Array.prototype.slice.call(fileList);
   importStatus.className = 'import-status';
-  importStatus.textContent = 'Lendo '+file.name+'…';
-  var reader = new FileReader();
-  reader.onload = function(e){
-    shp(e.target.result).then(function(result){
-      // shpjs pode retornar um FeatureCollection único ou um array (múltiplas camadas no zip)
-      var collections = Array.isArray(result) ? result : [result];
-      collections.forEach(function(fc, idx){
-        var baseName = file.name.replace(/\.zip$/i, '') + (collections.length>1 ? ' ('+(idx+1)+')' : '');
-        var geomType = (fc.features[0] && fc.features[0].geometry && fc.features[0].geometry.type) || 'Polygon';
-        var type = /line/i.test(geomType) ? 'line' : (/point/i.test(geomType) ? 'point' : 'polygon');
-        var guessField = null;
-        if(fc.features[0]){
-          var keys = Object.keys(fc.features[0].properties||{});
-          guessField = keys.length ? keys[0] : null;
-        }
-        addLayerEntry(baseName, 'outra', type, fc, 'importado agora', guessField);
-      });
-      importStatus.className = 'import-status ok';
-      importStatus.textContent = 'Camada adicionada ao mapa ✓';
-      fitAll();
-      setTimeout(function(){
-        closeSheet('sheetImport');
-        openSheet('sheetLayers');
-      }, 500);
+
+  if(files.length === 1 && /\.zip$/i.test(files[0].name)){
+    // Caminho 1: um único .zip — lido diretamente pelo shpjs.
+    var zipFile = files[0];
+    importStatus.textContent = 'Lendo '+zipFile.name+'…';
+    readAsArrayBuffer(zipFile).then(function(buf){
+      return shp(buf);
+    }).then(function(result){
+      addShapefileResult(result, baseNameNoExt(zipFile.name));
     }).catch(function(err){
-      console.error(err);
-      importStatus.className = 'import-status err';
-      importStatus.textContent = 'Não foi possível ler este .zip. Confirme que contém .shp, .shx e .dbf.';
+      importFailed(err, 'Não foi possível ler este .zip. Confirme que contém .shp, .shx e .dbf na raiz do arquivo (sem subpasta).');
     });
-  };
-  reader.readAsArrayBuffer(file);
+    return;
+  }
+
+  // Caminho 2: arquivos soltos (.shp + .shx + .dbf [+ .prj]) — empacotados em um .zip
+  // na memória do navegador, evitando qualquer problema de estrutura de pastas do celular.
+  var shpFile = files.filter(function(f){ return /\.shp$/i.test(f.name); })[0];
+  var dbfFile = files.filter(function(f){ return /\.dbf$/i.test(f.name); })[0];
+
+  if(files.length === 1 && !shpFile){
+    importFailed(new Error('arquivo .zip, .shp, .shx ou .dbf esperado'), 'Selecione um .zip do shapefile, ou marque junto pelo menos os arquivos .shp, .shx e .dbf.');
+    return;
+  }
+  if(!shpFile){
+    importFailed(new Error('faltou o .shp'), 'Selecione também o arquivo .shp.');
+    return;
+  }
+  if(!dbfFile){
+    importFailed(new Error('faltou o .dbf'), 'Selecione também o arquivo .dbf (tabela de atributos).');
+    return;
+  }
+
+  importStatus.textContent = 'Lendo '+files.length+' arquivo(s)…';
+  var zip = new JSZip();
+  Promise.all(files.map(function(f){
+    return readAsArrayBuffer(f).then(function(buf){ zip.file(f.name, buf); });
+  })).then(function(){
+    return zip.generateAsync({type:'arraybuffer'});
+  }).then(function(buf){
+    return shp(buf);
+  }).then(function(result){
+    addShapefileResult(result, baseNameNoExt(shpFile.name));
+  }).catch(function(err){
+    importFailed(err, 'Não foi possível ler os arquivos selecionados.');
+  });
 }
 
 /* ======================= GPS em tempo real ======================= */
