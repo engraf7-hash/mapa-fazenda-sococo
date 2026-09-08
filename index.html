@@ -281,7 +281,6 @@
 <div class="toast" id="toast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/shpjs@4.0.4/dist/shp.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="data.js"></script>
 <script>
@@ -556,7 +555,169 @@ document.querySelectorAll('[data-close]').forEach(function(b){
   b.addEventListener('click', function(){ closeSheet(b.dataset.close); });
 });
 
-/* ======================= Importar shapefile (.zip OU arquivos soltos) via shpjs ======================= */
+/* ======================= Leitor de shapefile próprio (sem depender do shpjs) =======================
+   Lê .shp (geometria), .dbf (atributos), .cpg (codificação de texto) e .prj (projeção) direto dos
+   bytes do arquivo. Suporta pontos, linhas, polígonos (com buracos) e multipontos, e reprojeta
+   automaticamente coordenadas em Transverse Mercator (ex.: UTM/SIRGAS2000) para lat/lon (WGS84). */
+
+function parseDbf(buf, encodingLabel){
+  var dv = new DataView(buf);
+  var numRecords = dv.getUint32(4, true);
+  var headerLen = dv.getUint16(8, true);
+  var recordLen = dv.getUint16(10, true);
+  var fields = [];
+  var off = 32;
+  while(dv.getUint8(off) !== 0x0D){
+    var nameBytes = new Uint8Array(buf, off, 11);
+    var name = '';
+    for(var i=0;i<11;i++){ if(nameBytes[i]===0) break; name += String.fromCharCode(nameBytes[i]); }
+    var type = String.fromCharCode(dv.getUint8(off+11));
+    var length = dv.getUint8(off+16);
+    fields.push({name:name, type:type, length:length});
+    off += 32;
+  }
+  var decoder;
+  try{ decoder = new TextDecoder(encodingLabel || 'utf-8'); }catch(e){ decoder = new TextDecoder('windows-1252'); }
+  var records = [];
+  var recOff = headerLen;
+  for(var r=0; r<numRecords && recOff+recordLen<=buf.byteLength; r++){
+    var props = {};
+    var fOff = recOff + 1; // pula o byte de flag de exclusão
+    fields.forEach(function(f){
+      var bytes = new Uint8Array(buf, fOff, f.length);
+      var text = decoder.decode(bytes).replace(/\0/g,'').trim();
+      var val;
+      if(f.type === 'N' || f.type === 'F'){
+        val = text === '' ? null : Number(text);
+        if(val !== null && isNaN(val)) val = null;
+      } else if(f.type === 'L'){
+        val = /[TtYy]/.test(text) ? true : (/[FfNn]/.test(text) ? false : null);
+      } else {
+        val = text;
+      }
+      props[f.name] = val;
+      fOff += f.length;
+    });
+    records.push(props);
+    recOff += recordLen;
+  }
+  return records;
+}
+
+function ringSignedArea(ring){
+  var sum = 0;
+  for(var i=0;i<ring.length-1;i++){ sum += (ring[i][0]*ring[i+1][1] - ring[i+1][0]*ring[i][1]); }
+  return sum/2;
+}
+
+function parseShp(buf, transform){
+  var dv = new DataView(buf);
+  var fileLenBytes = dv.getInt32(24, false)*2;
+  var geoms = [];
+  var off = 100;
+  while(off+8 <= fileLenBytes && off+8 <= buf.byteLength){
+    var contentLenWords = dv.getInt32(off+4, false);
+    var p = off+8;
+    var shapeType = dv.getInt32(p, true);
+    p += 4;
+    var geom = null;
+
+    var readXY = function(pos){
+      var x = dv.getFloat64(pos, true), y = dv.getFloat64(pos+8, true);
+      if(transform){ var t = transform(x,y); x=t[0]; y=t[1]; }
+      return [x,y];
+    };
+
+    if(shapeType===1 || shapeType===11 || shapeType===21){
+      geom = {type:'Point', coordinates: readXY(p)};
+    } else if(shapeType===8 || shapeType===18 || shapeType===28){
+      p += 32;
+      var numPoints = dv.getInt32(p, true); p+=4;
+      var pts = [];
+      for(var i=0;i<numPoints;i++){ pts.push(readXY(p)); p+=16; }
+      geom = {type:'MultiPoint', coordinates: pts};
+    } else if([3,13,23,5,15,25].indexOf(shapeType)!==-1){
+      var isPolygon = (shapeType===5||shapeType===15||shapeType===25);
+      p += 32;
+      var numParts = dv.getInt32(p, true); p+=4;
+      var numPoints2 = dv.getInt32(p, true); p+=4;
+      var partStarts = [];
+      for(var pi=0; pi<numParts; pi++){ partStarts.push(dv.getInt32(p, true)); p+=4; }
+      var allPts = [];
+      for(var qi=0; qi<numPoints2; qi++){ allPts.push(readXY(p)); p+=16; }
+      var parts = [];
+      for(var si=0; si<numParts; si++){
+        var start = partStarts[si];
+        var end = (si+1<numParts) ? partStarts[si+1] : numPoints2;
+        parts.push(allPts.slice(start,end));
+      }
+      if(!isPolygon){
+        geom = parts.length===1 ? {type:'LineString', coordinates:parts[0]} : {type:'MultiLineString', coordinates:parts};
+      } else {
+        var polygons = [];
+        parts.forEach(function(ring){
+          if(ringSignedArea(ring) < 0 || !polygons.length){ polygons.push([ring]); }
+          else { polygons[polygons.length-1].push(ring); }
+        });
+        geom = polygons.length===1 ? {type:'Polygon', coordinates:polygons[0]} : {type:'MultiPolygon', coordinates:polygons};
+      }
+    }
+    geoms.push(geom);
+    off = off + 8 + contentLenWords*2;
+  }
+  return geoms;
+}
+
+function cpgToEncoding(cpg){
+  if(!cpg) return 'utf-8';
+  var c = cpg.trim().toUpperCase();
+  if(/1252|ANSI/.test(c)) return 'windows-1252';
+  if(/8859-1|LATIN ?1/.test(c)) return 'iso-8859-1';
+  return 'utf-8';
+}
+
+// Projeção inversa Transverse Mercator (cobre UTM/SIRGAS2000 e sistemas equivalentes) via .prj.
+function parsePrjTransform(prjText){
+  if(!prjText || !/PROJCS/i.test(prjText)) return null; // já geográfico (lat/lon) — nada a fazer
+  var projMatch = prjText.match(/PROJECTION\["([^"]+)"\]/i);
+  if(!projMatch || !/Transverse_Mercator/i.test(projMatch[1])) return {unsupported:true};
+
+  var params = {};
+  var re = /PARAMETER\["([^"]+)",\s*([\-0-9.eE]+)\]/g, m;
+  while((m = re.exec(prjText))){ params[m[1]] = parseFloat(m[2]); }
+  var sph = prjText.match(/SPHEROID\["[^"]*",\s*([\-0-9.eE]+),\s*([\-0-9.eE]+)/i);
+  var a = sph ? parseFloat(sph[1]) : 6378137.0;
+  var invF = sph ? parseFloat(sph[2]) : 298.257222101;
+  var f = 1/invF, e2 = f*(2-f);
+  var e1 = (1-Math.sqrt(1-e2))/(1+Math.sqrt(1-e2));
+  var e2p = e2/(1-e2);
+  var falseE = params['False_Easting']||0, falseN = params['False_Northing']||0;
+  var lon0 = (params['Central_Meridian']||0)*Math.PI/180;
+  var k0 = params['Scale_Factor']||1;
+
+  return function(x,y){
+    var xr = x-falseE, yr = y-falseN;
+    var M = yr/k0;
+    var mu = M/(a*(1 - e2/4 - 3*e2*e2/64 - 5*Math.pow(e2,3)/256));
+    var phi1 = mu
+      + (3*e1/2 - 27*Math.pow(e1,3)/32)*Math.sin(2*mu)
+      + (21*e1*e1/16 - 55*Math.pow(e1,4)/32)*Math.sin(4*mu)
+      + (151*Math.pow(e1,3)/96)*Math.sin(6*mu)
+      + (1097*Math.pow(e1,4)/512)*Math.sin(8*mu);
+    var sinP=Math.sin(phi1), cosP=Math.cos(phi1), tanP=Math.tan(phi1);
+    var C1=e2p*cosP*cosP, T1=tanP*tanP;
+    var N1=a/Math.sqrt(1-e2*sinP*sinP);
+    var R1=a*(1-e2)/Math.pow(1-e2*sinP*sinP,1.5);
+    var D=xr/(N1*k0);
+    var lat = phi1 - (N1*tanP/R1)*(D*D/2 - (5+3*T1+10*C1-4*C1*C1-9*e2p)*Math.pow(D,4)/24
+      + (61+90*T1+298*C1+45*T1*T1-252*e2p-3*C1*C1)*Math.pow(D,6)/720);
+    var lon = lon0 + (D - (1+2*T1+C1)*Math.pow(D,3)/6
+      + (5-2*C1+28*T1-3*C1*C1+8*e2p+24*T1*T1)*Math.pow(D,5)/120)/cosP;
+    return [lon*180/Math.PI, lat*180/Math.PI];
+  };
+}
+
+/* ======================= Interface de importação (.zip OU arquivos soltos) ======================= */
 var dropZone = document.getElementById('dropZone');
 var fileInput = document.getElementById('fileInput');
 var importStatus = document.getElementById('importStatus');
@@ -585,29 +746,11 @@ function readAsArrayBuffer(file){
     r.readAsArrayBuffer(file);
   });
 }
-
-function baseNameNoExt(name){
-  return name.replace(/\.[^.]+$/, '');
+function arrayBufferToText(buf){
+  return new TextDecoder('utf-8').decode(buf);
 }
-
-function addShapefileResult(result, baseName){
-  // shpjs pode retornar um FeatureCollection único ou um array (múltiplas camadas)
-  var collections = Array.isArray(result) ? result : [result];
-  collections.forEach(function(fc, idx){
-    if(!fc.features || !fc.features.length){ return; }
-    var name = baseName + (collections.length>1 ? ' ('+(idx+1)+')' : '');
-    var geomType = (fc.features[0].geometry && fc.features[0].geometry.type) || 'Polygon';
-    var type = /line/i.test(geomType) ? 'line' : (/point/i.test(geomType) ? 'point' : 'polygon');
-    var keys = Object.keys(fc.features[0].properties||{});
-    addLayerEntry(name, 'outra', type, fc, 'importado agora', keys.length ? keys[0] : null);
-  });
-  importStatus.className = 'import-status ok';
-  importStatus.textContent = 'Camada adicionada ao mapa ✓';
-  fitAll();
-  setTimeout(function(){
-    closeSheet('sheetImport');
-    openSheet('sheetLayers');
-  }, 500);
+function baseNameNoExt(name){
+  return name.split('/').pop().replace(/\.[^.]+$/, '');
 }
 
 function importFailed(err, hint){
@@ -617,77 +760,107 @@ function importFailed(err, hint){
   importStatus.textContent = (hint || 'Não foi possível importar.') + ' (' + detail + ')';
 }
 
+function buildLayerFromParts(parts, baseName){
+  // parts: { shp: ArrayBuffer, dbf: ArrayBuffer, prj: string|null, cpg: string|null }
+  var transform = null;
+  if(parts.prj){
+    var t = parsePrjTransform(parts.prj);
+    if(t && t.unsupported){
+      showToast('Aviso: "'+baseName+'" usa uma projeção não suportada para reprojeção automática (apenas geográfica e UTM/Transverse Mercator são convertidas). A camada foi importada com as coordenadas originais.');
+    } else {
+      transform = t;
+    }
+  }
+  var geoms = parseShp(parts.shp, transform);
+  var props = parseDbf(parts.dbf, cpgToEncoding(parts.cpg));
+  var features = [];
+  for(var i=0;i<geoms.length;i++){
+    if(!geoms[i]) continue;
+    features.push({type:'Feature', geometry:geoms[i], properties: props[i]||{}});
+  }
+  if(!features.length){ throw new Error('nenhuma feição válida encontrada em '+baseName); }
+  var fc = {type:'FeatureCollection', features:features};
+  var geomType = features[0].geometry.type;
+  var type = /line/i.test(geomType) ? 'line' : (/point/i.test(geomType) ? 'point' : 'polygon');
+  var keys = Object.keys(features[0].properties||{});
+  addLayerEntry(baseName, 'outra', type, fc, 'importado agora', keys.length ? keys[0] : null);
+}
+
+function groupFilesByBaseName(fileMap){
+  // fileMap: { 'nome.shp': ArrayBuffer|string, ... } -> agrupa por nome-base (sem extensão)
+  var groups = {};
+  Object.keys(fileMap).forEach(function(name){
+    var m = name.match(/^(.*)\.([a-z]+)$/i);
+    if(!m) return;
+    var base = m[1], ext = m[2].toLowerCase();
+    groups[base] = groups[base] || {};
+    groups[base][ext] = fileMap[name];
+  });
+  return groups;
+}
+
+function importGroups(groups){
+  var names = Object.keys(groups).filter(function(base){ return groups[base].shp && groups[base].dbf; });
+  if(!names.length){ throw new Error('nenhum par .shp + .dbf encontrado'); }
+  var added = 0;
+  names.forEach(function(base){
+    var g = groups[base];
+    try{
+      buildLayerFromParts({
+        shp: g.shp,
+        dbf: g.dbf,
+        prj: g.prj ? arrayBufferToText(g.prj) : null,
+        cpg: g.cpg ? arrayBufferToText(g.cpg) : null
+      }, base.split('/').pop());
+      added++;
+    }catch(e){ console.error('falha ao importar '+base, e); }
+  });
+  if(!added){ throw new Error('não foi possível montar nenhuma camada'); }
+  importStatus.className = 'import-status ok';
+  importStatus.textContent = added>1 ? (added+' camadas adicionadas ao mapa ✓') : 'Camada adicionada ao mapa ✓';
+  fitAll();
+  setTimeout(function(){ closeSheet('sheetImport'); openSheet('sheetLayers'); }, 500);
+}
+
 function handleFileSelection(fileList){
   var files = Array.prototype.slice.call(fileList);
   importStatus.className = 'import-status';
+  var shapefileExt = /\.(shp|shx|dbf|prj|cpg)$/i;
 
   if(files.length === 1 && /\.zip$/i.test(files[0].name)){
-    // Caminho 1: um único .zip — reempacotado só com os arquivos do shapefile
-    // (ignora .qmd e afins que possam ter ido junto), depois lido pelo shpjs.
-    var zipFile = files[0];
-    importStatus.textContent = 'Lendo '+zipFile.name+'…';
-    readAsArrayBuffer(zipFile).then(function(buf){
-      return JSZip.loadAsync(buf);
-    }).then(function(originalZip){
-      var shapefileExt = /\.(shp|shx|dbf|prj|cpg)$/i;
-      var entries = Object.keys(originalZip.files).filter(function(name){
-        return shapefileExt.test(name) && !originalZip.files[name].dir;
+    importStatus.textContent = 'Lendo '+files[0].name+'…';
+    readAsArrayBuffer(files[0]).then(function(buf){ return JSZip.loadAsync(buf); })
+    .then(function(zip){
+      var entryNames = Object.keys(zip.files).filter(function(n){
+        return shapefileExt.test(n) && !zip.files[n].dir;
       });
-      if(!entries.length){
-        throw new Error('nenhum .shp/.shx/.dbf encontrado dentro do .zip');
-      }
-      var cleanZip = new JSZip();
-      return Promise.all(entries.map(function(name){
-        return originalZip.files[name].async('arraybuffer').then(function(data){
-          var flatName = name.split('/').pop(); // remove eventual subpasta
-          cleanZip.file(flatName, data);
+      if(!entryNames.length){ throw new Error('nenhum .shp/.shx/.dbf dentro do .zip'); }
+      var fileMap = {};
+      return Promise.all(entryNames.map(function(n){
+        return zip.files[n].async('arraybuffer').then(function(buf){
+          fileMap[n.split('/').pop()] = buf;
         });
-      })).then(function(){
-        return cleanZip.generateAsync({type:'arraybuffer'});
-      });
-    }).then(function(cleanBuf){
-      return shp(cleanBuf);
-    }).then(function(result){
-      addShapefileResult(result, baseNameNoExt(zipFile.name));
+      })).then(function(){ return fileMap; });
+    }).then(function(fileMap){
+      importGroups(groupFilesByBaseName(fileMap));
     }).catch(function(err){
-      importFailed(err, 'Não foi possível ler este .zip. Confirme que contém .shp, .shx e .dbf.');
+      importFailed(err, 'Não foi possível ler este .zip.');
     });
     return;
   }
 
-  // Caminho 2: arquivos soltos (.shp + .shx + .dbf [+ .prj/.cpg]) — empacotados em um .zip
-  // na memória do navegador. Ignora de propósito qualquer arquivo que não seja parte do
-  // shapefile (ex.: .qmd do QGIS, ou um .zip marcado junto por engano), pois esses arquivos
-  // extras confundem o leitor de shapefile.
-  var shapefileExt = /\.(shp|shx|dbf|prj|cpg)$/i;
+  // Arquivos soltos: ignora tudo que não seja parte de um shapefile (ex.: .qmd do QGIS).
   var relevantFiles = files.filter(function(f){ return shapefileExt.test(f.name); });
-
-  var shpFile = relevantFiles.filter(function(f){ return /\.shp$/i.test(f.name); })[0];
-  var dbfFile = relevantFiles.filter(function(f){ return /\.dbf$/i.test(f.name); })[0];
-
-  if(files.length === 1 && !shpFile){
-    importFailed(new Error('arquivo .zip, .shp, .shx ou .dbf esperado'), 'Selecione um .zip do shapefile, ou marque junto pelo menos os arquivos .shp, .shx e .dbf.');
+  if(!relevantFiles.length){
+    importFailed(new Error('nenhum .shp/.shx/.dbf selecionado'), 'Selecione um .zip do shapefile, ou marque junto pelo menos os arquivos .shp e .dbf.');
     return;
   }
-  if(!shpFile){
-    importFailed(new Error('faltou o .shp'), 'Selecione também o arquivo .shp.');
-    return;
-  }
-  if(!dbfFile){
-    importFailed(new Error('faltou o .dbf'), 'Selecione também o arquivo .dbf (tabela de atributos).');
-    return;
-  }
-
   importStatus.textContent = 'Lendo '+relevantFiles.length+' arquivo(s)…';
-  var zip = new JSZip();
+  var fileMap = {};
   Promise.all(relevantFiles.map(function(f){
-    return readAsArrayBuffer(f).then(function(buf){ zip.file(f.name, buf); });
+    return readAsArrayBuffer(f).then(function(buf){ fileMap[f.name] = buf; });
   })).then(function(){
-    return zip.generateAsync({type:'arraybuffer'});
-  }).then(function(buf){
-    return shp(buf);
-  }).then(function(result){
-    addShapefileResult(result, baseNameNoExt(shpFile.name));
+    importGroups(groupFilesByBaseName(fileMap));
   }).catch(function(err){
     importFailed(err, 'Não foi possível ler os arquivos selecionados.');
   });

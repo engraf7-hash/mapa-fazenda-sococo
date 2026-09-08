@@ -4,7 +4,7 @@
 //  - Ladrilhos de mapa (OpenStreetMap / Esri) -> cache-first "cresce com o uso":
 //    todo ladrilho visitado com internet fica salvo e volta a ser servido offline.
 
-const CACHE_NAME = 'campo-fazenda-v3';
+const CACHE_NAME = 'campo-fazenda-v4';
 const TILE_CACHE = 'campo-fazenda-tiles-v1';
 
 const APP_SHELL = [
@@ -15,7 +15,6 @@ const APP_SHELL = [
   './icon.svg',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
-  'https://cdn.jsdelivr.net/npm/shpjs@4.0.4/dist/shp.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'
 ];
 
