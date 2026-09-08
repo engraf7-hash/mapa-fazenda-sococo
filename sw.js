@@ -4,7 +4,7 @@
 //  - Ladrilhos de mapa (OpenStreetMap / Esri) -> cache-first "cresce com o uso":
 //    todo ladrilho visitado com internet fica salvo e volta a ser servido offline.
 
-const CACHE_NAME = 'campo-fazenda-v11';
+const CACHE_NAME = 'campo-fazenda-v17';
 const TILE_CACHE = 'campo-fazenda-tiles-v1';
 
 const APP_SHELL = [

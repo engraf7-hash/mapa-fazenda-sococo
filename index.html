@@ -122,7 +122,15 @@
   }
   .layer-row{display:flex; align-items:center; gap:10px;}
   .swatch{width:14px;height:14px;border-radius:4px; flex:none; border:1px solid rgba(0,0,0,0.15);}
+  .color-picker{width:22px;height:22px;padding:0;border:1px solid rgba(0,0,0,0.18);border-radius:6px;background:none;flex:none;cursor:pointer;}
+  .color-picker::-webkit-color-swatch-wrapper{padding:0;}
+  .color-picker::-webkit-color-swatch{border:none;border-radius:5px;}
+  .color-picker::-moz-color-swatch{border:none;border-radius:5px;}
+  .color-reset{flex:none;border:none;background:none;color:#8A8371;font-size:15px;line-height:1;cursor:pointer;padding:4px;border-radius:6px;}
+  .color-reset:active{color:#5B5646;background:#EFE9DA;}
   .layer-name{font-weight:600; font-size:14.5px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .layer-delete{flex:none;border:none;background:none;font-size:15px;line-height:1;cursor:pointer;padding:4px;border-radius:6px;opacity:.7;}
+  .layer-delete:active{opacity:1;background:#F6E4DE;}
   .layer-meta{font-size:11.5px; color:#8A8371; margin-top:1px;}
 
   .switch{position:relative; width:42px; height:24px; flex:none;}
@@ -190,6 +198,28 @@
   .attr-pop td{padding:2px 6px 2px 0; vertical-align:top;}
   .attr-pop td.k{color:#8A8371; white-space:nowrap; font-weight:600;}
   .attr-pop .title{font-weight:700; margin-bottom:4px; font-size:13.5px;}
+  .attr-pop .coord-text{font-size:14px; font-weight:600; letter-spacing:.2px; margin-bottom:8px; color:#2B2A25;}
+  .popup-copy-btn{
+    width:100%; padding:8px 10px; border:none; border-radius:8px;
+    background:var(--well-500); color:#fff; font-size:13px; font-weight:700; cursor:pointer;
+  }
+  .popup-copy-btn:active{opacity:.85;}
+  .collect-pin{font-size:26px; line-height:1; filter:drop-shadow(0 2px 2px rgba(0,0,0,.35));}
+  .measure-pt{width:14px;height:14px;border-radius:50%;background:#C0392B;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4);}
+  .measure-badge{
+    background:#2B2A25; color:#fff; font-size:12.5px; font-weight:700; letter-spacing:.2px;
+    padding:4px 9px; border-radius:999px; white-space:nowrap; box-shadow:0 2px 6px rgba(0,0,0,.3);
+    transform:translate(-50%,-130%);
+  }
+  #map.measure-cursor, #map.measure-cursor .leaflet-container{ cursor:crosshair !important; }
+  .track-status{
+    display:none; align-items:center; gap:8px;
+    position:fixed; top:calc(env(safe-area-inset-top,0px) + 62px); left:50%; transform:translateX(-50%);
+    z-index:1000; background:#C0392B; color:#fff; font-size:13px; font-weight:700;
+    padding:7px 14px; border-radius:999px; box-shadow:0 4px 14px rgba(0,0,0,0.35);
+  }
+  .track-dot{width:9px;height:9px;border-radius:50%;background:#fff;animation:trackPulse 1.1s ease-in-out infinite;}
+  @keyframes trackPulse{ 0%,100%{opacity:1;} 50%{opacity:.25;} }
 
   .parcel-label{
     background:transparent!important; border:none!important; box-shadow:none!important;
@@ -242,9 +272,17 @@
   <button data-bm="sat">Satélite</button>
 </div>
 
+<div class="track-status" id="trackStatus">
+  <span class="track-dot"></span>
+  <span id="trackStatusText">Gravando…</span>
+</div>
+
 <div class="fab-col">
-  <button class="fab" id="btnImport" title="Importar shapefile">📂</button>
+  <button class="fab" id="btnImport" title="Importar shapefile / KML / KMZ">📂</button>
   <button class="fab" id="btnLayers" title="Camadas">🗂️</button>
+  <button class="fab" id="btnMeasure" title="Medir distância">📏</button>
+  <button class="fab" id="btnCollect" title="Coletar coordenada">📌</button>
+  <button class="fab" id="btnRecordTrack" title="Gravar caminho percorrido">⏺️</button>
   <button class="fab primary" id="btnGps" title="Minha localização">📍</button>
 </div>
 
@@ -264,15 +302,15 @@
 <div class="sheet import-panel" id="sheetImport">
   <div class="sheet-handle"></div>
   <div class="sheet-head">
-    <h2>Importar shapefile</h2>
+    <h2>Importar camada</h2>
     <button class="close" data-close="sheetImport">✕</button>
   </div>
   <div class="sheet-body">
-    <p class="hint">Envie um arquivo <strong>.zip</strong> com o shapefile completo, <strong>ou</strong> selecione os arquivos soltos (.shp + .shx + .dbf, e .prj se houver) de uma vez — o app aceita dos dois jeitos. A camada é adicionada ao mapa e empilhada sobre as demais.</p>
+    <p class="hint">Envie um arquivo <strong>.zip</strong> com o shapefile completo, arquivos soltos do shapefile (.shp + .shx + .dbf, e .prj se houver), <strong>ou</strong> um <strong>.kml</strong> / <strong>.kmz</strong> exportado do Google Earth. A camada é adicionada ao mapa e empilhada sobre as demais.</p>
     <label class="drop" id="dropZone">
       <span class="icon">⬆️</span>
       Toque para escolher os arquivos<br>ou arraste-os aqui
-      <input type="file" id="fileInput" accept=".zip,.shp,.shx,.dbf,.prj,.cpg" multiple>
+      <input type="file" id="fileInput" accept=".zip,.shp,.shx,.dbf,.prj,.cpg,.kml,.kmz" multiple>
     </label>
     <div class="import-status" id="importStatus"></div>
   </div>
@@ -338,6 +376,29 @@ var roleStyle = {
 };
 var swatchColor = {area:'#2B4736', parcelas:'#D6A03D', estradas:'#B9633F', outra:'#2F7C8C'};
 
+/* Cor personalizada por camada (opcional). Guardada em localStorage por NOME da camada,
+   já que o id é regenerado a cada carregamento do app. */
+function loadSavedColor(name){
+  try{ return localStorage.getItem('layerColor:'+name) || null; }catch(e){ return null; }
+}
+function saveColor(name, hex){
+  try{ localStorage.setItem('layerColor:'+name, hex); }catch(e){}
+}
+function clearSavedColor(name){
+  try{ localStorage.removeItem('layerColor:'+name); }catch(e){}
+}
+function effectiveStyle(entry){
+  var base = roleStyle[entry.role] || roleStyle.outra;
+  if(entry.customColor){
+    var custom = {};
+    for(var k in base){ custom[k] = base[k]; }
+    custom.color = entry.customColor;
+    custom.fillColor = entry.customColor;
+    return custom;
+  }
+  return base;
+}
+
 /* ======================= Criação / render de camadas ======================= */
 function fieldsOf(geojson){
   var set = [];
@@ -372,7 +433,7 @@ function centroidLatLng(layer){
 }
 
 function buildLeafletLayer(entry){
-  var style = roleStyle[entry.role] || roleStyle.outra;
+  var style = effectiveStyle(entry);
   var isLine = entry.type === 'line';
   var group = L.layerGroup();
   var labelGroup = L.layerGroup();
@@ -430,7 +491,8 @@ function addLayerEntry(name, role, type, geojson, source, defaultLabelField){
   var entry = {
     id:'l'+layerSeq+'-'+Date.now(),
     name:name, role:role, type:type, geojson:geojson, source:source||'embutida',
-    labelField: defaultLabelField || null, visible:true, showLabels:true
+    labelField: defaultLabelField || null, visible:true, showLabels:true,
+    customColor: loadSavedColor(name)
   };
   buildLeafletLayer(entry);
   entry.leafletLayer.addTo(map);
@@ -438,6 +500,45 @@ function addLayerEntry(name, role, type, geojson, source, defaultLabelField){
   refreshLabels(entry);
   layers.push(entry);
   return entry;
+}
+
+function rebuildLayerStyle(entry){
+  var wasVisible = entry.visible;
+  var showLabels = entry.showLabels;
+  map.removeLayer(entry.leafletLayer);
+  map.removeLayer(entry.labelLayer);
+  buildLeafletLayer(entry);
+  if(wasVisible){
+    entry.leafletLayer.addTo(map);
+    if(showLabels){ refreshLabels(entry); entry.labelLayer.addTo(map); }
+  }
+}
+
+function setLayerColor(entry, hex){
+  entry.customColor = hex;
+  saveColor(entry.name, hex);
+  rebuildLayerStyle(entry);
+}
+
+function resetLayerColor(entry){
+  entry.customColor = null;
+  clearSavedColor(entry.name);
+  rebuildLayerStyle(entry);
+}
+
+function removeLayerEntry(entry){
+  var isEmbedded = entry.source === 'embutida';
+  var msg = 'Remover a camada "'+entry.name+'" do mapa?' +
+    (isEmbedded ? ' (ela volta a aparecer na próxima vez que o app for aberto)'
+                : ' (pra usar de novo, será preciso reimportar o arquivo)');
+  if(!window.confirm(msg)) return;
+
+  map.removeLayer(entry.leafletLayer);
+  map.removeLayer(entry.labelLayer);
+  var idx = layers.indexOf(entry);
+  if(idx !== -1) layers.splice(idx, 1);
+  renderLayersPanel();
+  showToast('Camada "'+entry.name+'" removida.');
 }
 
 function fitAll(){
@@ -465,11 +566,14 @@ function renderLayersPanel(){
       return '<option value="'+escapeHtml(f)+'"'+(f===entry.labelField?' selected':'')+'>'+escapeHtml(f)+'</option>';
     }).join('');
 
+    var currentColor = entry.customColor || swatchColor[entry.role] || swatchColor.outra;
     card.innerHTML =
       '<div class="layer-row">'+
-        '<span class="swatch" style="background:'+(swatchColor[entry.role]||swatchColor.outra)+'"></span>'+
+        '<input type="color" class="color-picker" value="'+currentColor+'" title="Mudar cor da camada">'+
+        '<button class="color-reset" title="Restaurar cor padrão">↺</button>'+
         '<span class="layer-name">'+escapeHtml(entry.name)+'</span>'+
         '<label class="switch"><input type="checkbox" class="vis-toggle" '+(entry.visible?'checked':'')+'><span class="track"></span></label>'+
+        '<button class="layer-delete" title="Remover camada">🗑️</button>'+
       '</div>'+
       '<div class="layer-meta">'+entry.geojson.features.length+' feição(ões) · '+escapeHtml(entry.source)+'</div>'+
       (entry.type!=='line' ? '<button class="expand-btn">Rótulo e detalhes ▾</button>' : '') +
@@ -486,6 +590,16 @@ function renderLayersPanel(){
           '</div>'+
         '</div>' : '');
 
+    // cor personalizada
+    card.querySelector('.color-picker').addEventListener('input', function(e){
+      setLayerColor(entry, e.target.value);
+    });
+    card.querySelector('.color-reset').addEventListener('click', function(){
+      resetLayerColor(entry);
+      var picker = card.querySelector('.color-picker');
+      if(picker) picker.value = swatchColor[entry.role] || swatchColor.outra;
+    });
+
     // toggles
     card.querySelector('.vis-toggle').addEventListener('change', function(e){
       entry.visible = e.target.checked;
@@ -496,6 +610,10 @@ function renderLayersPanel(){
         map.removeLayer(entry.leafletLayer);
         map.removeLayer(entry.labelLayer);
       }
+    });
+
+    card.querySelector('.layer-delete').addEventListener('click', function(){
+      removeLayerEntry(entry);
     });
 
     var expandBtn = card.querySelector('.expand-btn');
@@ -529,7 +647,7 @@ function renderLayersPanel(){
 
   var addBtn = document.createElement('button');
   addBtn.className = 'add-layer-btn';
-  addBtn.innerHTML = '📂 Importar novo shapefile (.zip)';
+  addBtn.innerHTML = '📂 Importar shapefile / KML / KMZ';
   addBtn.addEventListener('click', function(){
     closeSheet('sheetLayers');
     openSheet('sheetImport');
@@ -717,7 +835,155 @@ function parsePrjTransform(prjText){
   };
 }
 
-/* ======================= Interface de importação (.zip OU arquivos soltos) ======================= */
+/* ======================= Leitor de KML / KMZ (exportado do Google Earth) =======================
+   KMZ é apenas um .kml compactado em .zip (às vezes com imagens/ícones junto) — extraímos o .kml
+   de dentro com o JSZip que já usamos pro shapefile, e depois interpretamos o XML com DOMParser. */
+
+function firstChildTag(el, tag){
+  var list = el.getElementsByTagName(tag);
+  return list.length ? list[0] : null;
+}
+
+function parseKmlCoordinates(text){
+  return text.trim().split(/\s+/).filter(Boolean).map(function(tuple){
+    var parts = tuple.split(',');
+    return [parseFloat(parts[0]), parseFloat(parts[1])];
+  }).filter(function(c){ return !isNaN(c[0]) && !isNaN(c[1]); });
+}
+
+function kmlGeometryToGeoJSON(node){
+  var tag = node.tagName;
+  if(tag === 'Point'){
+    var c = firstChildTag(node, 'coordinates');
+    if(!c) return null;
+    var coords = parseKmlCoordinates(c.textContent);
+    return coords.length ? {type:'Point', coordinates:coords[0]} : null;
+  }
+  if(tag === 'LineString'){
+    var c = firstChildTag(node, 'coordinates');
+    if(!c) return null;
+    var coords = parseKmlCoordinates(c.textContent);
+    return coords.length >= 2 ? {type:'LineString', coordinates:coords} : null;
+  }
+  if(tag === 'Polygon'){
+    var outerWrap = firstChildTag(node, 'outerBoundaryIs');
+    var outerRing = outerWrap ? firstChildTag(outerWrap, 'LinearRing') : null;
+    var outerCoordsEl = outerRing ? firstChildTag(outerRing, 'coordinates') : null;
+    if(!outerCoordsEl) return null;
+    var rings = [parseKmlCoordinates(outerCoordsEl.textContent)];
+    if(rings[0].length < 3) return null;
+    var innerWraps = node.getElementsByTagName('innerBoundaryIs');
+    Array.prototype.forEach.call(innerWraps, function(iw){
+      var ring = firstChildTag(iw, 'LinearRing');
+      var coordsEl = ring ? firstChildTag(ring, 'coordinates') : null;
+      if(coordsEl){
+        var hole = parseKmlCoordinates(coordsEl.textContent);
+        if(hole.length >= 3) rings.push(hole);
+      }
+    });
+    return {type:'Polygon', coordinates:rings};
+  }
+  if(tag === 'MultiGeometry'){
+    var geoms = [];
+    Array.prototype.forEach.call(node.children, function(child){
+      var g = kmlGeometryToGeoJSON(child);
+      if(g) geoms.push(g);
+    });
+    return geoms.length ? {type:'GeometryCollection', geometries:geoms} : null;
+  }
+  return null;
+}
+
+function basicGeomType(geometry){
+  if(!geometry) return null;
+  if(geometry.type === 'GeometryCollection'){
+    return geometry.geometries && geometry.geometries.length ? basicGeomType(geometry.geometries[0]) : null;
+  }
+  if(/Point/.test(geometry.type)) return 'point';
+  if(/LineString/.test(geometry.type)) return 'line';
+  if(/Polygon/.test(geometry.type)) return 'polygon';
+  return null;
+}
+
+function parseKmlPlacemark(pm){
+  var nameEl = firstChildTag(pm, 'name');
+  var descEl = firstChildTag(pm, 'description');
+  var props = {};
+  if(nameEl && nameEl.textContent.trim()) props.name = nameEl.textContent.trim();
+  if(descEl && descEl.textContent.trim()) props.description = descEl.textContent.trim();
+
+  var dataEls = pm.getElementsByTagName('Data');
+  Array.prototype.forEach.call(dataEls, function(d){
+    var key = d.getAttribute('name');
+    var valEl = firstChildTag(d, 'value');
+    if(key && valEl) props[key] = valEl.textContent.trim();
+  });
+
+  var geomTags = ['Point','LineString','Polygon','MultiGeometry'];
+  var geomNode = null;
+  for(var i=0;i<pm.children.length;i++){
+    if(geomTags.indexOf(pm.children[i].tagName) !== -1){ geomNode = pm.children[i]; break; }
+  }
+  if(!geomNode) return null;
+  var geometry = kmlGeometryToGeoJSON(geomNode);
+  return geometry ? {geometry:geometry, properties:props} : null;
+}
+
+function importKmlText(kmlText, fallbackName){
+  var xml = new DOMParser().parseFromString(kmlText, 'text/xml');
+  if(xml.getElementsByTagName('parsererror').length){
+    throw new Error('KML inválido ou corrompido');
+  }
+  var docNameEl = xml.getElementsByTagName('name')[0];
+  var docName = docNameEl ? docNameEl.textContent.trim() : null;
+
+  var placemarks = xml.getElementsByTagName('Placemark');
+  if(!placemarks.length){ throw new Error('nenhum Placemark encontrado no KML'); }
+
+  var byType = {polygon:[], line:[], point:[]};
+  for(var i=0;i<placemarks.length;i++){
+    var parsed = parseKmlPlacemark(placemarks[i]);
+    if(!parsed) continue;
+    var t = basicGeomType(parsed.geometry);
+    if(!t) continue;
+    byType[t].push({type:'Feature', geometry:parsed.geometry, properties:parsed.properties});
+  }
+
+  var baseLabel = fallbackName || docName || 'Camada KML';
+  var typesPresent = Object.keys(byType).filter(function(t){ return byType[t].length; });
+  if(!typesPresent.length){ throw new Error('nenhuma geometria compatível encontrada (ponto, linha ou polígono)'); }
+
+  var added = 0;
+  typesPresent.forEach(function(t){
+    var features = byType[t];
+    var fc = {type:'FeatureCollection', features:features};
+    var suffix = typesPresent.length > 1 ? (t==='polygon'?' — polígonos':(t==='line'?' — linhas':' — pontos')) : '';
+    var keys = [];
+    features.forEach(function(f){
+      Object.keys(f.properties||{}).forEach(function(k){ if(keys.indexOf(k)===-1) keys.push(k); });
+    });
+    var labelField = keys.indexOf('name')!==-1 ? 'name' : (keys.length ? keys[0] : null);
+    addLayerEntry(baseLabel+suffix, 'outra', t, fc, 'importado agora (KML)', labelField);
+    added++;
+  });
+  return added;
+}
+
+function readKmlOrKmzAsText(file){
+  if(/\.kmz$/i.test(file.name)){
+    return readAsArrayBuffer(file).then(function(buf){ return JSZip.loadAsync(buf); })
+      .then(function(zip){
+        var kmlName = Object.keys(zip.files).filter(function(n){
+          return /\.kml$/i.test(n) && !zip.files[n].dir;
+        })[0];
+        if(!kmlName){ throw new Error('nenhum .kml dentro do .kmz'); }
+        return zip.files[kmlName].async('string');
+      });
+  }
+  return readAsArrayBuffer(file).then(function(buf){ return arrayBufferToText(buf); });
+}
+
+/* ======================= Interface de importação (.zip / arquivos soltos / .kml / .kmz) ======================= */
 var dropZone = document.getElementById('dropZone');
 var fileInput = document.getElementById('fileInput');
 var importStatus = document.getElementById('importStatus');
@@ -849,10 +1115,34 @@ function handleFileSelection(fileList){
     return;
   }
 
+  // Arquivos .kml e/ou .kmz (um ou vários de uma vez, ex.: várias camadas exportadas do Google Earth)
+  var kmlKmzFiles = files.filter(function(f){ return /\.(kml|kmz)$/i.test(f.name); });
+  if(kmlKmzFiles.length && kmlKmzFiles.length === files.length){
+    importStatus.textContent = 'Lendo '+kmlKmzFiles.length+' arquivo(s) KML/KMZ…';
+    var totalAdded = 0;
+    var errors = [];
+    Promise.all(kmlKmzFiles.map(function(f){
+      return readKmlOrKmzAsText(f).then(function(text){
+        try{
+          totalAdded += importKmlText(text, baseNameNoExt(f.name));
+        }catch(e){ errors.push(f.name+': '+e.message); console.error(e); }
+      }).catch(function(e){ errors.push(f.name+': '+e.message); console.error(e); });
+    })).then(function(){
+      if(!totalAdded){ throw new Error(errors.join('; ') || 'nenhuma camada importada'); }
+      importStatus.className = 'import-status ok';
+      importStatus.textContent = totalAdded>1 ? (totalAdded+' camadas adicionadas ao mapa ✓') : 'Camada adicionada ao mapa ✓';
+      fitAll();
+      setTimeout(function(){ closeSheet('sheetImport'); openSheet('sheetLayers'); }, 500);
+    }).catch(function(err){
+      importFailed(err, 'Não foi possível importar o(s) arquivo(s) KML/KMZ.');
+    });
+    return;
+  }
+
   // Arquivos soltos: ignora tudo que não seja parte de um shapefile (ex.: .qmd do QGIS).
   var relevantFiles = files.filter(function(f){ return shapefileExt.test(f.name); });
   if(!relevantFiles.length){
-    importFailed(new Error('nenhum .shp/.shx/.dbf selecionado'), 'Selecione um .zip do shapefile, ou marque junto pelo menos os arquivos .shp e .dbf.');
+    importFailed(new Error('nenhum .shp/.shx/.dbf selecionado'), 'Selecione um .zip do shapefile, os arquivos .shp/.dbf soltos, ou um .kml/.kmz.');
     return;
   }
   importStatus.textContent = 'Lendo '+relevantFiles.length+' arquivo(s)…';
@@ -919,6 +1209,316 @@ btnGps.addEventListener('click', function(){
   else stopGps();
 });
 map.on('dragstart', function(){ gpsFollowing = false; });
+
+/* ======================= Coletar coordenada (grau/minuto/segundo + copiar) ======================= */
+var collectLayer = L.layerGroup().addTo(map);
+var btnCollect = document.getElementById('btnCollect');
+
+function decimalToDMS(decimal, isLatitude){
+  var hemi = isLatitude ? (decimal >= 0 ? 'N' : 'S') : (decimal >= 0 ? 'E' : 'W');
+  var abs = Math.abs(decimal);
+  var deg = Math.floor(abs);
+  var minFloat = (abs - deg) * 60;
+  var min = Math.floor(minFloat);
+  var sec = (minFloat - min) * 60;
+  var secStr = sec.toFixed(1);
+  if(parseFloat(secStr) >= 60){ secStr = '0.0'; min += 1; }
+  if(min >= 60){ min = 0; deg += 1; }
+  var degStr = String(deg).padStart(isLatitude ? 2 : 3, '0');
+  var minStr = String(min).padStart(2, '0');
+  var secPadded = (parseFloat(secStr) < 10 ? '0' : '') + secStr;
+  return degStr + '°' + minStr + "'" + secPadded + '"' + hemi;
+}
+
+function formatCoordDMS(lat, lon){
+  return decimalToDMS(lat, true) + ' ' + decimalToDMS(lon, false);
+}
+
+function legacyCopy(text){
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  var ok = false;
+  try{ ok = document.execCommand('copy'); }catch(e){ ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+function copyCoordText(text){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(function(){
+      showToast('Coordenada copiada: ' + text);
+    }).catch(function(){
+      if(legacyCopy(text)) showToast('Coordenada copiada: ' + text);
+      else showToast('Não foi possível copiar automaticamente. Toque e segure o texto para copiar.');
+    });
+  } else {
+    if(legacyCopy(text)) showToast('Coordenada copiada: ' + text);
+    else showToast('Não foi possível copiar automaticamente. Toque e segure o texto para copiar.');
+  }
+}
+
+map.on('popupopen', function(e){
+  var node = e.popup._contentNode;
+  var btn = node && node.querySelector('.popup-copy-btn');
+  if(btn){
+    btn.addEventListener('click', function(){ copyCoordText(btn.dataset.coord); });
+  }
+});
+
+function dropCollectedMarker(lat, lon, text){
+  var marker = L.marker([lat, lon], {
+    icon: L.divIcon({className:'', html:'<div class="collect-pin">📌</div>', iconSize:[26,26], iconAnchor:[13,26]})
+  });
+  marker.bindPopup(
+    '<div class="attr-pop">'+
+      '<div class="title">Coordenada coletada</div>'+
+      '<div class="coord-text">'+escapeHtml(text)+'</div>'+
+      '<button class="popup-copy-btn" data-coord="'+escapeHtml(text)+'">📋 Copiar</button>'+
+    '</div>'
+  );
+  marker.addTo(collectLayer);
+  marker.openPopup();
+  return marker;
+}
+
+function collectCoordinate(){
+  if(!navigator.geolocation){
+    showToast('Este navegador não oferece GPS.');
+    return;
+  }
+  showToast('Obtendo coordenada…');
+  navigator.geolocation.getCurrentPosition(function(pos){
+    var lat = pos.coords.latitude, lon = pos.coords.longitude;
+    var text = formatCoordDMS(lat, lon);
+    map.panTo([lat, lon]);
+    dropCollectedMarker(lat, lon, text);
+    copyCoordText(text);
+  }, function(err){
+    if(err.code === 1) showToast('Permita o acesso à localização nas configurações do navegador.');
+    else showToast('Não foi possível obter a localização agora. Tente de novo.');
+  }, {enableHighAccuracy:true, timeout:15000, maximumAge:5000});
+}
+
+btnCollect.addEventListener('click', collectCoordinate);
+
+/* ======================= Medir distância (linha reta entre dois pontos) ======================= */
+var btnMeasure = document.getElementById('btnMeasure');
+var measureLayer = L.layerGroup().addTo(map);
+var measureMode = false;
+var measurePoints = [];
+
+function formatDistance(meters){
+  if(meters < 1000) return Math.round(meters) + ' m';
+  return (meters / 1000).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' km';
+}
+
+function clearMeasure(){
+  measureLayer.clearLayers();
+  measurePoints = [];
+}
+
+function stopMeasureMode(){
+  measureMode = false;
+  btnMeasure.classList.remove('recording');
+  map.getContainer().classList.remove('measure-cursor');
+}
+
+function startMeasureMode(){
+  clearMeasure();
+  measureMode = true;
+  btnMeasure.classList.add('recording');
+  map.getContainer().classList.add('measure-cursor');
+  showToast('Toque dois pontos no mapa para medir a distância em linha reta.');
+}
+
+function addMeasurePoint(latlng){
+  var marker = L.marker(latlng, {
+    icon: L.divIcon({className:'', html:'<div class="measure-pt"></div>', iconSize:[14,14], iconAnchor:[7,7]})
+  }).addTo(measureLayer);
+  measurePoints.push(latlng);
+
+  if(measurePoints.length === 2){
+    var line = L.polyline(measurePoints, {color:'#C0392B', weight:3, dashArray:'6,6'}).addTo(measureLayer);
+    var meters = measurePoints[0].distanceTo(measurePoints[1]);
+    var mid = L.latLng(
+      (measurePoints[0].lat + measurePoints[1].lat) / 2,
+      (measurePoints[0].lng + measurePoints[1].lng) / 2
+    );
+    L.marker(mid, {
+      icon: L.divIcon({className:'', html:'<div class="measure-badge">'+formatDistance(meters)+'</div>', iconSize:null}),
+      interactive:false
+    }).addTo(measureLayer);
+    showToast('Distância: ' + formatDistance(meters));
+    stopMeasureMode();
+  }
+}
+
+map.on('click', function(e){
+  if(!measureMode) return;
+  addMeasurePoint(e.latlng);
+});
+
+btnMeasure.addEventListener('click', function(){
+  if(measureMode){ stopMeasureMode(); return; }
+  startMeasureMode();
+});
+
+/* ======================= Gravar caminho percorrido (salva .kml — lido pelo app e pelo Google Earth) ======================= */
+var btnRecordTrack = document.getElementById('btnRecordTrack');
+var trackStatusEl = document.getElementById('trackStatus');
+var trackStatusText = document.getElementById('trackStatusText');
+var trackLiveLayer = L.layerGroup().addTo(map);
+var recordingTrack = false;
+var trackWatchId = null;
+var trackPoints = [];
+var trackPolyline = null;
+var trackStartTs = null;
+var trackDistanceM = 0;
+var trackStatusTimer = null;
+
+function formatDuration(ms){
+  var totalSec = Math.floor(ms / 1000);
+  var m = Math.floor(totalSec / 60);
+  var s = totalSec % 60;
+  return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+function escapeXml(s){
+  return String(s).replace(/[<>&'"]/g, function(c){
+    return {'<':'&lt;','>':'&gt;','&':'&amp;',"'":'&apos;','"':'&quot;'}[c];
+  });
+}
+
+function sanitizeFileName(name){
+  return name.replace(/[^a-zA-Z0-9\-_ ]/g, '').trim().replace(/\s+/g, '_') || 'caminho';
+}
+
+function downloadTextFile(filename, text, mime){
+  var blob = new Blob([text], {type: mime || 'text/plain'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+}
+
+function buildKmlFromTrack(name, points, distanceMeters){
+  var coordsText = points.map(function(p){ return p.lng + ',' + p.lat + ',0'; }).join(' ');
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<kml xmlns="http://www.opengis.net/kml/2.2">\n' +
+    '<Document>\n' +
+    '<name>' + escapeXml(name) + '</name>\n' +
+    '<Placemark>\n' +
+    '<name>' + escapeXml(name) + '</name>\n' +
+    '<description>Distância percorrida: ' + escapeXml(formatDistance(distanceMeters)) + '</description>\n' +
+    '<Style><LineStyle><color>ffd16f1f</color><width>4</width></LineStyle></Style>\n' +
+    '<LineString>\n' +
+    '<tessellate>1</tessellate>\n' +
+    '<coordinates>' + coordsText + '</coordinates>\n' +
+    '</LineString>\n' +
+    '</Placemark>\n' +
+    '</Document>\n' +
+    '</kml>';
+}
+
+function updateTrackStatus(){
+  if(!recordingTrack) return;
+  var elapsed = Date.now() - trackStartTs;
+  trackStatusText.textContent = 'Gravando — ' + formatDistance(trackDistanceM) + ' · ' + formatDuration(elapsed);
+}
+
+function onTrackPosition(pos){
+  var latlng = L.latLng(pos.coords.latitude, pos.coords.longitude);
+  if(trackPoints.length){
+    var last = trackPoints[trackPoints.length - 1];
+    var d = last.distanceTo(latlng);
+    if(d < 3) return; // ignora ruído de GPS parado no lugar
+    trackDistanceM += d;
+  }
+  trackPoints.push(latlng);
+  trackPolyline.addLatLng(latlng);
+  updateTrackStatus();
+}
+
+function onTrackError(){
+  showToast('Sinal de GPS instável durante a gravação.');
+}
+
+function startTrackRecording(){
+  if(!navigator.geolocation){
+    showToast('Este navegador não oferece GPS.');
+    return;
+  }
+  trackPoints = [];
+  trackDistanceM = 0;
+  trackStartTs = Date.now();
+  trackLiveLayer.clearLayers();
+  trackPolyline = L.polyline([], {color:'#1F6FD1', weight:4, opacity:0.9}).addTo(trackLiveLayer);
+  recordingTrack = true;
+  btnRecordTrack.classList.add('recording');
+  btnRecordTrack.innerHTML = '⏹️';
+  trackStatusEl.style.display = 'flex';
+  trackStatusText.textContent = 'Gravando — 0 m · 00:00';
+  trackStatusTimer = setInterval(updateTrackStatus, 1000);
+  trackWatchId = navigator.geolocation.watchPosition(onTrackPosition, onTrackError, {
+    enableHighAccuracy:true, maximumAge:1000, timeout:15000
+  });
+  showToast('Gravação de caminho iniciada.');
+}
+
+function stopTrackRecording(){
+  recordingTrack = false;
+  btnRecordTrack.classList.remove('recording');
+  btnRecordTrack.innerHTML = '⏺️';
+  trackStatusEl.style.display = 'none';
+  clearInterval(trackStatusTimer);
+  if(trackWatchId !== null){ navigator.geolocation.clearWatch(trackWatchId); trackWatchId = null; }
+
+  if(trackPoints.length < 2){
+    showToast('Caminho muito curto — nada foi salvo.');
+    trackLiveLayer.clearLayers();
+    return;
+  }
+
+  var defaultName = 'Caminho ' + new Date().toLocaleDateString('pt-BR');
+  var name = window.prompt('Nome do caminho gravado:', defaultName);
+  if(name === null){ trackLiveLayer.clearLayers(); showToast('Gravação descartada.'); return; }
+  name = name.trim() || defaultName;
+
+  var fc = {
+    type:'FeatureCollection',
+    features:[{
+      type:'Feature',
+      geometry:{ type:'LineString', coordinates: trackPoints.map(function(p){ return [p.lng, p.lat]; }) },
+      properties:{
+        name: name,
+        distancia_m: Math.round(trackDistanceM),
+        duracao: formatDuration(Date.now() - trackStartTs),
+        data: new Date().toISOString()
+      }
+    }]
+  };
+  trackLiveLayer.clearLayers();
+  addLayerEntry(name, 'estradas', 'line', fc, 'caminho gravado', 'name');
+  fitAll();
+
+  var kml = buildKmlFromTrack(name, trackPoints, trackDistanceM);
+  downloadTextFile(sanitizeFileName(name) + '.kml', kml, 'application/vnd.google-earth.kml+xml');
+  showToast('Caminho salvo (' + formatDistance(trackDistanceM) + '). Arquivo .kml baixado — abre neste app (📂 Importar) e também no Google Earth.');
+}
+
+btnRecordTrack.addEventListener('click', function(){
+  if(recordingTrack) stopTrackRecording();
+  else startTrackRecording();
+});
 
 /* ======================= Toast ======================= */
 var toastTimer = null;
