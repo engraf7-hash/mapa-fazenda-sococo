@@ -622,23 +622,48 @@ function handleFileSelection(fileList){
   importStatus.className = 'import-status';
 
   if(files.length === 1 && /\.zip$/i.test(files[0].name)){
-    // Caminho 1: um único .zip — lido diretamente pelo shpjs.
+    // Caminho 1: um único .zip — reempacotado só com os arquivos do shapefile
+    // (ignora .qmd e afins que possam ter ido junto), depois lido pelo shpjs.
     var zipFile = files[0];
     importStatus.textContent = 'Lendo '+zipFile.name+'…';
     readAsArrayBuffer(zipFile).then(function(buf){
-      return shp(buf);
+      return JSZip.loadAsync(buf);
+    }).then(function(originalZip){
+      var shapefileExt = /\.(shp|shx|dbf|prj|cpg)$/i;
+      var entries = Object.keys(originalZip.files).filter(function(name){
+        return shapefileExt.test(name) && !originalZip.files[name].dir;
+      });
+      if(!entries.length){
+        throw new Error('nenhum .shp/.shx/.dbf encontrado dentro do .zip');
+      }
+      var cleanZip = new JSZip();
+      return Promise.all(entries.map(function(name){
+        return originalZip.files[name].async('arraybuffer').then(function(data){
+          var flatName = name.split('/').pop(); // remove eventual subpasta
+          cleanZip.file(flatName, data);
+        });
+      })).then(function(){
+        return cleanZip.generateAsync({type:'arraybuffer'});
+      });
+    }).then(function(cleanBuf){
+      return shp(cleanBuf);
     }).then(function(result){
       addShapefileResult(result, baseNameNoExt(zipFile.name));
     }).catch(function(err){
-      importFailed(err, 'Não foi possível ler este .zip. Confirme que contém .shp, .shx e .dbf na raiz do arquivo (sem subpasta).');
+      importFailed(err, 'Não foi possível ler este .zip. Confirme que contém .shp, .shx e .dbf.');
     });
     return;
   }
 
-  // Caminho 2: arquivos soltos (.shp + .shx + .dbf [+ .prj]) — empacotados em um .zip
-  // na memória do navegador, evitando qualquer problema de estrutura de pastas do celular.
-  var shpFile = files.filter(function(f){ return /\.shp$/i.test(f.name); })[0];
-  var dbfFile = files.filter(function(f){ return /\.dbf$/i.test(f.name); })[0];
+  // Caminho 2: arquivos soltos (.shp + .shx + .dbf [+ .prj/.cpg]) — empacotados em um .zip
+  // na memória do navegador. Ignora de propósito qualquer arquivo que não seja parte do
+  // shapefile (ex.: .qmd do QGIS, ou um .zip marcado junto por engano), pois esses arquivos
+  // extras confundem o leitor de shapefile.
+  var shapefileExt = /\.(shp|shx|dbf|prj|cpg)$/i;
+  var relevantFiles = files.filter(function(f){ return shapefileExt.test(f.name); });
+
+  var shpFile = relevantFiles.filter(function(f){ return /\.shp$/i.test(f.name); })[0];
+  var dbfFile = relevantFiles.filter(function(f){ return /\.dbf$/i.test(f.name); })[0];
 
   if(files.length === 1 && !shpFile){
     importFailed(new Error('arquivo .zip, .shp, .shx ou .dbf esperado'), 'Selecione um .zip do shapefile, ou marque junto pelo menos os arquivos .shp, .shx e .dbf.');
@@ -653,9 +678,9 @@ function handleFileSelection(fileList){
     return;
   }
 
-  importStatus.textContent = 'Lendo '+files.length+' arquivo(s)…';
+  importStatus.textContent = 'Lendo '+relevantFiles.length+' arquivo(s)…';
   var zip = new JSZip();
-  Promise.all(files.map(function(f){
+  Promise.all(relevantFiles.map(function(f){
     return readAsArrayBuffer(f).then(function(buf){ zip.file(f.name, buf); });
   })).then(function(){
     return zip.generateAsync({type:'arraybuffer'});
